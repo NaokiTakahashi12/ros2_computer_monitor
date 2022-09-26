@@ -27,8 +27,11 @@ namespace ros2_computer_monitor
             
             float m_diagnostic_period;
 
-            float m_cpu_warn_threshold,
-                  m_cpu_error_threshold;
+            float m_cpu_usage_warn_threshold,
+                  m_cpu_usage_error_threshold;
+
+            float m_cpu_speed_warn_threshold,
+                  m_cpu_speed_error_threshold;
 
             double m_old_time_nanoseconds;
 
@@ -72,8 +75,10 @@ namespace ros2_computer_monitor
 
         // TODO Remove hard coded parameter
         m_diagnostic_period = 1;
-        m_cpu_warn_threshold = 60;
-        m_cpu_error_threshold = 95;
+        m_cpu_usage_warn_threshold = 60;
+        m_cpu_usage_error_threshold = 95;
+        m_cpu_speed_warn_threshold =  3;
+        m_cpu_speed_error_threshold =  4.5;
 
         m_diagnostic_updater = std::make_unique<diagnostic_updater::Updater>
         (
@@ -273,12 +278,12 @@ namespace ros2_computer_monitor
         unsigned char status_msg;
         std::string usage_message;
 
-        if(cpu_usage[0] > m_cpu_error_threshold)
+        if(cpu_usage[0] > m_cpu_usage_error_threshold)
         {
             status_msg = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
             usage_message = "Error";
         }
-        else if(cpu_usage[0] > m_cpu_warn_threshold)
+        else if(cpu_usage[0] > m_cpu_usage_warn_threshold)
         {
             status_msg = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             usage_message = "Warning";
@@ -368,13 +373,39 @@ namespace ros2_computer_monitor
             }
         }
 
+        float sum_clock_speed = 0;
+
+        for(const auto &clock_speed : cpu_clock_speed)
+        {
+            sum_clock_speed += clock_speed;
+        }
+
+        const float average_clock_speed = sum_clock_speed / cpu_clock_speed.size();
+
         unsigned char status_msg;
         std::string clock_status_message;
 
-        // TODO
-        status_msg = diagnostic_msgs::msg::DiagnosticStatus::OK;
-        clock_status_message = "OK";
+        if(average_clock_speed >= m_cpu_speed_error_threshold)
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+            clock_status_message = "Error";
+        }
+        else if(average_clock_speed >= m_cpu_speed_warn_threshold)
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            clock_status_message = "Warning";
+        }
+        else
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::OK;
+            clock_status_message = "OK";
+        }
 
+        diagnostic_status.add
+        (
+            "cpu_average_speed",
+            std::to_string(average_clock_speed) + " GHz"
+        );
         diagnostic_status.summary(status_msg, clock_status_message);
     }
 
