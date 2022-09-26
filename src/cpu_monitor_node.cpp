@@ -1,10 +1,4 @@
 
-#include <sys/times.h>
-#include <sys/sysinfo.h>
-#include <sys/statvfs.h>
-
-#include <cstddef>
-
 #include <memory>
 #include <chrono>
 #include <functional>
@@ -29,10 +23,15 @@ namespace ros2_computer_monitor
             ~CPUMonitorNode();
 
         private :
+            using CPUStatus = std::vector<std::vector<int>>;
+            
             float m_diagnostic_period;
 
-            float m_cpu_warn_threshold,
-                  m_cpu_error_threshold;
+            float m_cpu_usage_warn_threshold,
+                  m_cpu_usage_error_threshold;
+
+            float m_cpu_speed_warn_threshold,
+                  m_cpu_speed_error_threshold;
 
             double m_old_time_nanoseconds;
 
@@ -42,14 +41,15 @@ namespace ros2_computer_monitor
 
             std::unique_ptr<diagnostic_updater::Updater> m_diagnostic_updater;
 
-            void cpuUsageDiagnostics(diagnostic_updater::DiagnosticStatusWrapper &);
+            void cpuUsageDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper &);
+            void cpuClockDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper &);
 
-            void addCPUStatusToDiagnostic
+            void addCPUCoreTimeStatus
             (
                 diagnostic_updater::DiagnosticStatusWrapper &,
-                const std::vector<std::vector<int>> &cpu_core_times,
-                const double duration_time_milliseconds
+                const double now_time_nanoseconds
             );
+            void addCPUCoreClockSpeed(diagnostic_updater::DiagnosticStatusWrapper &);
 
             std::vector<float> getCPUUsage(
                 const std::vector<std::vector<int>> &cpu_core_times,
@@ -57,7 +57,6 @@ namespace ros2_computer_monitor
             );
 
             void updatePreCPUCoreTimes(const std::vector<std::vector<int>> &cpu_core_times);
-
             void updateOldTimeNanoseconds(const double now_time_nanoseconds);
     };
 
@@ -76,8 +75,10 @@ namespace ros2_computer_monitor
 
         // TODO Remove hard coded parameter
         m_diagnostic_period = 1;
-        m_cpu_warn_threshold = 60;
-        m_cpu_error_threshold = 95;
+        m_cpu_usage_warn_threshold = 60;
+        m_cpu_usage_error_threshold = 95;
+        m_cpu_speed_warn_threshold =  3;
+        m_cpu_speed_error_threshold =  4.5;
 
         m_diagnostic_updater = std::make_unique<diagnostic_updater::Updater>
         (
@@ -94,10 +95,20 @@ namespace ros2_computer_monitor
 
         m_diagnostic_updater->add
         (
-            "CPU Status",
+            "CPU Usage Status",
             std::bind
             (
-                &CPUMonitorNode::cpuUsageDiagnostics,
+                &CPUMonitorNode::cpuUsageDiagnosticsCallback,
+                this,
+                std::placeholders::_1
+            )
+        );
+        m_diagnostic_updater->add
+        (
+            "CPU Clock Speed Status",
+            std::bind
+            (
+                &CPUMonitorNode::cpuClockDiagnosticsCallback,
                 this,
                 std::placeholders::_1
             )
@@ -109,13 +120,27 @@ namespace ros2_computer_monitor
         RCLCPP_INFO(this->get_logger(), "Finish cpu_monitor_node");
     }
 
-    void CPUMonitorNode::cpuUsageDiagnostics(diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status)
+    void CPUMonitorNode::cpuUsageDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status)
+    {
+        const double now_time_nanoseconds = this->now().nanoseconds();
+
+        addCPUCoreTimeStatus(diagnostic_status, now_time_nanoseconds);
+    }
+
+    void CPUMonitorNode::cpuClockDiagnosticsCallback(diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status)
+    {
+        addCPUCoreClockSpeed(diagnostic_status);
+    }
+
+    void CPUMonitorNode::addCPUCoreTimeStatus
+    (
+        diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status,
+        const double now_time_nanoseconds
+    )
     {
         constexpr auto processor_status_filename = "/proc/stat";
 
         std::ifstream processor_status_file;
-
-        const double now_time_nanoseconds = this->now().nanoseconds();
 
         try
         {
@@ -201,30 +226,64 @@ namespace ros2_computer_monitor
         const double duration_time_milliseconds
             = static_cast<double>(now_time_nanoseconds - m_old_time_nanoseconds) * 1e-6;
 
+        {
+            int j = 0;
+            bool first_call = true;
+            float count_of_thread;
+
+            for(const auto &core_times : cpu_core_times)
+            {
+                if(std::exchange(first_call, false))
+                {
+                    count_of_thread = cpu_core_times.size();
+                }
+                else
+                {
+                    count_of_thread = 1;
+                }
+                int i = 0;
+
+                for(const auto &core_time : core_times)
+                {
+                    const std::string status_key = "core_" + std::to_string(j) + "_" + m_stat_column_names[i];
+                    const float cpu_usage_percentage =
+                        1e3 * (core_time - m_pre_cpu_core_times[j][i])
+                        / (duration_time_milliseconds * count_of_thread);
+
+                    diagnostic_status.add
+                    (
+                        status_key, std::to_string(cpu_usage_percentage) + " %"
+                    );
+                    i ++;
+                }
+                j ++;
+            }
+        }
+
         auto cpu_usage = getCPUUsage
         (
             cpu_core_times,
             duration_time_milliseconds
         );
 
-        addCPUStatusToDiagnostic
-        (
-            diagnostic_status,
-            cpu_core_times,
-            duration_time_milliseconds
-        );
-        updatePreCPUCoreTimes(cpu_core_times);
-        updateOldTimeNanoseconds(now_time_nanoseconds);
+        for(unsigned int i = 0; i < cpu_usage.size(); i ++)
+        {
+            diagnostic_status.add
+            (
+                "cpu_" + std::to_string(i) + "_usage",
+                std::to_string(cpu_usage[i]) + " %"
+            );
+        }
 
         unsigned char status_msg;
         std::string usage_message;
 
-        if(cpu_usage[0] > m_cpu_error_threshold)
+        if(cpu_usage[0] > m_cpu_usage_error_threshold)
         {
             status_msg = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
             usage_message = "Error";
         }
-        else if(cpu_usage[0] > m_cpu_warn_threshold)
+        else if(cpu_usage[0] > m_cpu_usage_warn_threshold)
         {
             status_msg = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             usage_message = "Warning";
@@ -236,46 +295,118 @@ namespace ros2_computer_monitor
         }
 
         diagnostic_status.summary(status_msg, usage_message);
+
+        updatePreCPUCoreTimes(cpu_core_times);
+        updateOldTimeNanoseconds(now_time_nanoseconds);
     }
 
-    void CPUMonitorNode::addCPUStatusToDiagnostic
-    (
-        diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status,
-        const std::vector<std::vector<int>> &cpu_core_times,
-        const double duration_time_milliseconds
-    )
+    void CPUMonitorNode::addCPUCoreClockSpeed(diagnostic_updater::DiagnosticStatusWrapper &diagnostic_status)
     {
-        int j = 0;
-        bool first_call = true;
-        float count_of_thread;
+        constexpr auto cpu_info_filename = "/proc/cpuinfo";
 
-        for(const auto &core_times : cpu_core_times)
+        std::ifstream cpu_info_file;
+
+        try
         {
-            if(std::exchange(first_call, false))
+            cpu_info_file.open
+            (
+                cpu_info_filename,
+                std::ios::in
+            );
+            if(!cpu_info_file.is_open())
             {
-                count_of_thread = cpu_core_times.size();
+                throw std::runtime_error("Failed open " + std::string(cpu_info_filename));
             }
-            else
+        }
+        catch(const std::exception &e)
+        {
+            RCLCPP_ERROR_STREAM(this->get_logger(), e.what());
+        }
+
+        constexpr char cpu_info_delimiter = ':';
+
+        const std::string cpu_clock_speed_tag = "cpu MHz";
+
+        std::string line_buffer,
+                    element_buffer;
+
+        std::vector<float> cpu_clock_speed;
+
+        while(std::getline(cpu_info_file, line_buffer))
+        {
+            if(std::string::npos == line_buffer.find(cpu_clock_speed_tag))
             {
-                count_of_thread = 1;
+                continue;
             }
+
+            bool first_element = true;
+            std::istringstream iss(line_buffer);
+
+            while(std::getline(iss, element_buffer, cpu_info_delimiter))
+            {
+                if(std::exchange(first_element, false))
+                {
+                    continue;
+                }
+                cpu_clock_speed.push_back
+                (
+                    std::atof(element_buffer.c_str()) * 1e-3
+                );
+            }
+        }
+        cpu_info_file.close();
+
+        {
             int i = 0;
 
-            for(const auto &core_time : core_times)
+            for(const auto &clock_speed : cpu_clock_speed)
             {
-                const std::string status_key = "core_" + std::to_string(j) + "_" + m_stat_column_names[i];
-                const float cpu_usage_percentage =
-                    1e3 * (core_time - m_pre_cpu_core_times[j][i])
-                    / (duration_time_milliseconds * count_of_thread);
+                const std::string status_key = "core_" + std::to_string(i) + "_speed";
 
                 diagnostic_status.add
                 (
-                    status_key, std::to_string(cpu_usage_percentage) + " %"
+                    status_key,
+                    std::to_string(clock_speed) + " GHz"
                 );
+
                 i ++;
             }
-            j ++;
         }
+
+        float sum_clock_speed = 0;
+
+        for(const auto &clock_speed : cpu_clock_speed)
+        {
+            sum_clock_speed += clock_speed;
+        }
+
+        const float average_clock_speed = sum_clock_speed / cpu_clock_speed.size();
+
+        unsigned char status_msg;
+        std::string clock_status_message;
+
+        if(average_clock_speed >= m_cpu_speed_error_threshold)
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+            clock_status_message = "Error";
+        }
+        else if(average_clock_speed >= m_cpu_speed_warn_threshold)
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            clock_status_message = "Warning";
+        }
+        else
+        {
+            status_msg = diagnostic_msgs::msg::DiagnosticStatus::OK;
+            clock_status_message = "OK";
+        }
+
+        diagnostic_status.add
+        (
+            "cpu_average_speed",
+            std::to_string(average_clock_speed) + " GHz"
+        );
+        diagnostic_status.summary(status_msg, clock_status_message);
     }
 
     std::vector<float> CPUMonitorNode::getCPUUsage
