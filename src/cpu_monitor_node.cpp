@@ -101,8 +101,19 @@ namespace ros2_computer_monitor
             m_diagnostic_period
         );
 
-        // TODO Add unique hardware id
-        m_diagnostic_updater->setHardwareID("none");
+        constexpr auto host_name_environment_variable_name = "HOSTNAME";
+
+        const auto host_name = std::getenv
+        (
+            host_name_environment_variable_name
+        );
+
+        if(nullptr == host_name)
+        {
+            throw std::runtime_error("Not set HOSTNAME environment variable");
+        }
+
+        m_diagnostic_updater->setHardwareID(host_name);
 
         m_diagnostic_updater->add
         (
