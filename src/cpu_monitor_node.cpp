@@ -25,13 +25,13 @@ namespace ros2_computer_monitor
         private :
             using CPUStatus = std::vector<std::vector<int>>;
             
-            float m_diagnostic_period;
-
             float m_cpu_usage_warn_threshold,
                   m_cpu_usage_error_threshold;
 
             float m_cpu_speed_warn_threshold,
                   m_cpu_speed_error_threshold;
+
+            double m_diagnostic_period;
 
             double m_old_time_nanoseconds;
 
@@ -73,12 +73,23 @@ namespace ros2_computer_monitor
         m_stat_column_names.push_back("irq");
         m_stat_column_names.push_back("softirq");
 
-        // TODO Remove hard coded parameter
-        m_diagnostic_period = 1;
         m_cpu_usage_warn_threshold = 60;
         m_cpu_usage_error_threshold = 95;
         m_cpu_speed_warn_threshold =  3;
         m_cpu_speed_error_threshold =  4.5;
+        m_diagnostic_period = 1;
+
+        this->declare_parameter("cpu_usage_warn_threshold", m_cpu_usage_warn_threshold);
+        this->declare_parameter("cpu_usage_error_threshold", m_cpu_usage_error_threshold);
+        this->declare_parameter("cpu_speed_warn_threshold", m_cpu_speed_warn_threshold);
+        this->declare_parameter("cpu_speed_error_threshold", m_cpu_speed_error_threshold);
+        this->declare_parameter("diagnostic_period", m_diagnostic_period);
+
+        m_cpu_usage_warn_threshold = this->get_parameter("cpu_usage_warn_threshold").as_double();
+        m_cpu_usage_error_threshold = this->get_parameter("cpu_usage_error_threshold").as_double();
+        m_cpu_speed_warn_threshold =  this->get_parameter("cpu_speed_warn_threshold").as_double();
+        m_cpu_speed_error_threshold = this->get_parameter("cpu_speed_error_threshold").as_double();
+        m_diagnostic_period = this->get_parameter("diagnostic_period").as_double();
 
         m_diagnostic_updater = std::make_unique<diagnostic_updater::Updater>
         (
