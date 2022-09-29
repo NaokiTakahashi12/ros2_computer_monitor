@@ -230,7 +230,13 @@ namespace ros2_computer_monitor
         }
         processor_status_file.close();
 
-        if(m_pre_cpu_core_times.size() < 1)
+        if(1 > cpu_core_times.size())
+        {
+            RCLCPP_WARN(this->get_logger(), "Failed get cpu core times");
+            return;
+        }
+
+        if(1 > m_pre_cpu_core_times.size())
         {
             for(const auto &core_times : cpu_core_times)
             {
@@ -377,6 +383,12 @@ namespace ros2_computer_monitor
             }
         }
         cpu_info_file.close();
+
+        if(1 > cpu_clock_speed.size())
+        {
+            RCLCPP_WARN(this->get_logger(), "Failed get cpu clock speed");
+            return;
+        }
 
         {
             int i = 0;
