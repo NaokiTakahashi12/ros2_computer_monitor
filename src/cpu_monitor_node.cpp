@@ -25,13 +25,13 @@ namespace ros2_computer_monitor
         private :
             using CPUStatus = std::vector<std::vector<int>>;
             
-            float m_diagnostic_period;
-
             float m_cpu_usage_warn_threshold,
                   m_cpu_usage_error_threshold;
 
             float m_cpu_speed_warn_threshold,
                   m_cpu_speed_error_threshold;
+
+            double m_diagnostic_period;
 
             double m_old_time_nanoseconds;
 
@@ -73,12 +73,23 @@ namespace ros2_computer_monitor
         m_stat_column_names.push_back("irq");
         m_stat_column_names.push_back("softirq");
 
-        // TODO Remove hard coded parameter
-        m_diagnostic_period = 1;
         m_cpu_usage_warn_threshold = 60;
         m_cpu_usage_error_threshold = 95;
         m_cpu_speed_warn_threshold =  3;
         m_cpu_speed_error_threshold =  4.5;
+        m_diagnostic_period = 1;
+
+        this->declare_parameter("cpu_usage_warn_threshold", m_cpu_usage_warn_threshold);
+        this->declare_parameter("cpu_usage_error_threshold", m_cpu_usage_error_threshold);
+        this->declare_parameter("cpu_speed_warn_threshold", m_cpu_speed_warn_threshold);
+        this->declare_parameter("cpu_speed_error_threshold", m_cpu_speed_error_threshold);
+        this->declare_parameter("diagnostic_period", m_diagnostic_period);
+
+        m_cpu_usage_warn_threshold = this->get_parameter("cpu_usage_warn_threshold").as_double();
+        m_cpu_usage_error_threshold = this->get_parameter("cpu_usage_error_threshold").as_double();
+        m_cpu_speed_warn_threshold =  this->get_parameter("cpu_speed_warn_threshold").as_double();
+        m_cpu_speed_error_threshold = this->get_parameter("cpu_speed_error_threshold").as_double();
+        m_diagnostic_period = this->get_parameter("diagnostic_period").as_double();
 
         m_diagnostic_updater = std::make_unique<diagnostic_updater::Updater>
         (
@@ -90,8 +101,19 @@ namespace ros2_computer_monitor
             m_diagnostic_period
         );
 
-        // TODO Add unique hardware id
-        m_diagnostic_updater->setHardwareID("none");
+        constexpr auto host_name_environment_variable_name = "HOSTNAME";
+
+        const auto host_name = std::getenv
+        (
+            host_name_environment_variable_name
+        );
+
+        if(nullptr == host_name)
+        {
+            throw std::runtime_error("Not set HOSTNAME environment variable");
+        }
+
+        m_diagnostic_updater->setHardwareID(host_name);
 
         m_diagnostic_updater->add
         (
@@ -208,7 +230,13 @@ namespace ros2_computer_monitor
         }
         processor_status_file.close();
 
-        if(m_pre_cpu_core_times.size() < 1)
+        if(1 > cpu_core_times.size())
+        {
+            RCLCPP_WARN(this->get_logger(), "Failed get cpu core times");
+            return;
+        }
+
+        if(1 > m_pre_cpu_core_times.size())
         {
             for(const auto &core_times : cpu_core_times)
             {
@@ -355,6 +383,12 @@ namespace ros2_computer_monitor
             }
         }
         cpu_info_file.close();
+
+        if(1 > cpu_clock_speed.size())
+        {
+            RCLCPP_WARN(this->get_logger(), "Failed get cpu clock speed");
+            return;
+        }
 
         {
             int i = 0;
