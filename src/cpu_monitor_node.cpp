@@ -94,6 +94,7 @@ namespace ros2_computer_monitor
         m_diagnostic_updater = std::make_unique<diagnostic_updater::Updater>
         (
             this->get_node_base_interface(),
+            this->get_node_clock_interface(),
             this->get_node_logging_interface(),
             this->get_node_parameters_interface(),
             this->get_node_timers_interface(),
